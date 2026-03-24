@@ -3,47 +3,47 @@
 <head>
 <meta charset="UTF-8">
 <title>Prison Escape VR Quiz</title>
-<!-- A-Frame 1.4.2 - 안정적인 Quest 지원 버전 -->
 <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
 <script>
 // ═══════════════════════════════════════════════
 // 퀴즈 데이터
+// 보기 순서 고정 (셔플 없음) → 정답 인덱스 신뢰 가능
 // ═══════════════════════════════════════════════
 const QUIZ = {
   ko:[
-    {q:"대한민국의 수도는?",         c:["부산","서울","인천","대전"],          a:1},
-    {q:"1 + 1 × 2 = ?",            c:["4","3","2","6"],                   a:1},
-    {q:"물의 끓는점 (°C)?",          c:["90","110","100","80"],             a:2},
-    {q:"세계에서 가장 큰 대륙은?",    c:["아프리카","유럽","아시아","아메리카"],  a:2},
-    {q:"영어로 '사과'는?",           c:["Banana","Mango","Grape","Apple"],  a:3}
+    {q:"대한민국의 수도는?",        c:["부산","서울","인천","대전"],            a:1},
+    {q:"1 + 1 x 2 = ?",           c:["4","3","2","6"],                     a:1},
+    {q:"물의 끓는점은? (C)",        c:["90","110","100","80"],               a:2},
+    {q:"가장 큰 대륙은?",           c:["아프리카","유럽","아시아","아메리카"],    a:2},
+    {q:"사과를 영어로 하면?",        c:["Banana","Mango","Grape","Apple"],    a:3}
   ],
   en:[
-    {q:"Capital of South Korea?",      c:["Busan","Seoul","Incheon","Daejeon"],  a:1},
-    {q:"1 + 1 x 2 = ?",               c:["4","3","2","6"],                      a:1},
-    {q:"Boiling point of water (C)?",  c:["90","110","100","80"],               a:2},
-    {q:"Largest continent?",           c:["Africa","Europe","Asia","America"],   a:2},
-    {q:"'사과' in English?",           c:["Banana","Mango","Grape","Apple"],     a:3}
+    {q:"Capital of South Korea?",     c:["Busan","Seoul","Incheon","Daejeon"],  a:1},
+    {q:"1 + 1 x 2 = ?",              c:["4","3","2","6"],                      a:1},
+    {q:"Boiling point of water (C)?", c:["90","110","100","80"],               a:2},
+    {q:"Largest continent?",          c:["Africa","Europe","Asia","America"],   a:2},
+    {q:"Apple in Korean?",            c:["Barana","Mango","Grape","Sagwa"],     a:3}
   ]
 };
 
 // ═══════════════════════════════════════════════
 // 상태
 // ═══════════════════════════════════════════════
-let lang='ko', qs=[], cur=0, score=0, answered=false, phase='lang';
+var lang='ko', qs=[], cur=0, score=0, answered=false, phase='lang';
 
 // ═══════════════════════════════════════════════
-// 컴포넌트 등록 (A-Frame 로드 후)
+// 컴포넌트 등록
 // ═══════════════════════════════════════════════
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function(){
 
-  // ----- 버튼 호버/클릭 컴포넌트 -----
+  // 버튼 클릭 컴포넌트
   AFRAME.registerComponent('vrbtn', {
     schema: {action:{type:'string',default:''}},
     init: function(){
       var el=this.el, act=this.data.action;
       el.addEventListener('mouseenter',function(){
         el.setAttribute('material','emissive','#a07818');
-        el.setAttribute('material','emissiveIntensity','0.55');
+        el.setAttribute('material','emissiveIntensity','0.6');
       });
       el.addEventListener('mouseleave',function(){
         el.setAttribute('material','emissive','#000000');
@@ -53,76 +53,62 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   });
 
-  // ----- Quest 컨트롤러 이동 컴포넌트 -----
-  // 왼쪽 조이스틱 → 앞뒤좌우 이동
-  // 오른쪽 조이스틱 → 좌우 회전
-  AFRAME.registerComponent('quest-move', {
-    init: function(){
-      this.vel = new THREE.Vector3();
-      this.leftAxis  = {x:0, y:0};
-      this.rightAxis = {x:0, y:0};
-
-      var self = this;
-      // 왼쪽 컨트롤러 축
-      document.addEventListener('axismove', function(e){
-        var hand = e.target.getAttribute('laser-controls') ||
-                   e.target.getAttribute('oculus-touch-controls');
-        if (!hand) return;
-        var h = (hand && hand.hand) ? hand.hand :
-                e.target.id === 'lc' ? 'left' : 'right';
-        if (h === 'left')  { self.leftAxis.x  = e.detail.axis[2]||0; self.leftAxis.y  = e.detail.axis[3]||0; }
-        if (h === 'right') { self.rightAxis.x = e.detail.axis[2]||0; self.rightAxis.y = e.detail.axis[3]||0; }
+  // Quest 조이스틱 이동 컴포넌트
+  AFRAME.registerComponent('quest-move',{
+    init:function(){
+      this.la={x:0,y:0}; this.ra={x:0,y:0};
+      var self=this;
+      window.addEventListener('axismove',function(e){
+        var id=e.target.id;
+        if(id==='lc'){ self.la.x=e.detail.axis[2]||0; self.la.y=e.detail.axis[3]||0; }
+        if(id==='rc'){ self.ra.x=e.detail.axis[2]||0; self.ra.y=e.detail.axis[3]||0; }
       });
     },
-    tick: function(t, dt){
-      if (!dt) return;
-      var s  = dt * 0.004;   // 이동 속도
-      var rs = dt * 0.08;    // 회전 속도 (도)
-      var rig = this.el;
-      var cam = document.querySelector('[camera]');
-      if (!cam) return;
-
-      // 카메라 수평 방향 구하기
-      var camRot = cam.object3D.rotation.y + rig.object3D.rotation.y;
-      var fwd = new THREE.Vector3(-Math.sin(camRot), 0, -Math.cos(camRot));
-      var right= new THREE.Vector3( Math.cos(camRot), 0, -Math.sin(camRot));
-
-      // 왼쪽 조이스틱: 이동
-      var lx = this.leftAxis.x, ly = this.leftAxis.y;
-      if (Math.abs(lx)>0.1 || Math.abs(ly)>0.1) {
-        var pos = rig.object3D.position;
-        pos.addScaledVector(fwd,  -ly * s);
-        pos.addScaledVector(right, lx * s);
-        // 방 경계
-        pos.x = Math.max(-3.5, Math.min(3.5, pos.x));
-        pos.z = Math.max(-5.5, Math.min(4.5, pos.z));
-        rig.object3D.position.copy(pos);
+    tick:function(t,dt){
+      if(!dt) return;
+      var s=dt*0.004, rs=dt*0.07;
+      var rig=this.el;
+      var cam=document.querySelector('[camera]');
+      if(!cam) return;
+      var cy=cam.object3D.rotation.y+rig.object3D.rotation.y;
+      var fx=-Math.sin(cy), fz=-Math.cos(cy);
+      var rx= Math.cos(cy), rz=-Math.sin(cy);
+      var lx=this.la.x, ly=this.la.y;
+      if(Math.abs(lx)>0.12||Math.abs(ly)>0.12){
+        var p=rig.object3D.position;
+        p.x+=( fx*(-ly)+rx*lx)*s;
+        p.z+=(fz*(-ly)+rz*lx)*s;
+        p.x=Math.max(-3.4,Math.min(3.4,p.x));
+        p.z=Math.max(-5.4,Math.min(4.4,p.z));
       }
-      // 오른쪽 조이스틱: 회전
-      var rx = this.rightAxis.x;
-      if (Math.abs(rx)>0.15) {
-        rig.object3D.rotation.y -= rx * rs * (Math.PI/180);
+      var rx2=this.ra.x;
+      if(Math.abs(rx2)>0.15){
+        rig.object3D.rotation.y-=rx2*rs*(Math.PI/180);
       }
     }
   });
 
-}); // DOMContentLoaded
+});
 
 // ═══════════════════════════════════════════════
-// 게임 함수
+// 게임 로직
 // ═══════════════════════════════════════════════
 function dispatch(act){
-  if (!act) return;
-  if (act==='lang_ko'){ lang='ko'; startQuiz(); }
-  else if(act==='lang_en'){ lang='en'; startQuiz(); }
-  else if(act==='retry'){ startQuiz(); }
-  else if(act.startsWith('choice_')){ selectAnswer(parseInt(act.split('_')[1])); }
+  if(!act) return;
+  if(act==='lang_ko'){lang='ko';startQuiz();}
+  else if(act==='lang_en'){lang='en';startQuiz();}
+  else if(act==='retry'){startQuiz();}
+  else if(act.startsWith('choice_')){selectAnswer(parseInt(act.split('_')[1]));}
 }
 
 function startQuiz(){
   phase='quiz';
-  qs=[...QUIZ[lang]];
-  for(var i=qs.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=qs[i];qs[i]=qs[j];qs[j]=t;}
+  // 문제 배열만 셔플 (보기 순서와 answer 인덱스는 절대 건드리지 않음)
+  qs=QUIZ[lang].slice();
+  for(var i=qs.length-1;i>0;i--){
+    var j=Math.floor(Math.random()*(i+1));
+    var tmp=qs[i]; qs[i]=qs[j]; qs[j]=tmp;
+  }
   cur=0; score=0; answered=false;
   vis('lang-panel',false);
   vis('result-panel',false);
@@ -135,33 +121,43 @@ function selectAnswer(idx){
   if(answered||phase!=='quiz') return;
   answered=true;
   var q=qs[cur];
+  var correct=(idx===q.a);
+  if(correct) score++;
+
   for(var i=0;i<4;i++){
-    var bg=ge('cbg'+i), tx=ge('ctx'+i);
+    var bg=ge('cbg'+i);
     if(!bg) continue;
     if(i===q.a){
+      // 정답 강조 (녹색)
       bg.setAttribute('material','color','#0d2e22');
       bg.setAttribute('material','emissive','#1d9e75');
       bg.setAttribute('material','emissiveIntensity','0.65');
-      if(tx) tx.setAttribute('value','✓ '+q.c[i]);
     } else if(i===idx){
+      // 오답 선택 강조 (빨간색)
       bg.setAttribute('material','color','#2e0e08');
       bg.setAttribute('material','emissive','#d85a30');
       bg.setAttribute('material','emissiveIntensity','0.5');
     }
   }
-  if(idx===q.a) score++;
+  // 보기 텍스트에 정답 표시
+  var ct=ge('ctx'+q.a);
+  if(ct) ct.setAttribute('value','V '+qs[cur].c[q.a]);
+
+  // 피드백
   var fb=ge('fb');
   if(fb){
-    var ok=idx===q.a;
-    fb.setAttribute('value', ok?(lang==='ko'?'✓ 정답!':'✓ Correct!'):(lang==='ko'?'✗ 오답':'✗ Wrong'));
-    fb.setAttribute('color', ok?'#5dcaa5':'#f0997b');
+    fb.setAttribute('value', correct
+      ? (lang==='ko'?'정답!':'Correct!')
+      : (lang==='ko'?'오답. 정답: '+q.c[q.a]:'Wrong. Answer: '+q.c[q.a]));
+    fb.setAttribute('color', correct?'#5dcaa5':'#f0997b');
   }
   sv('hud', hudTxt());
+
   setTimeout(function(){
     cur++;
     if(cur<qs.length){answered=false;renderQ();}
     else showResult();
-  },1800);
+  },1900);
 }
 
 function renderQ(){
@@ -169,18 +165,22 @@ function renderQ(){
   sv('qtxt', q.q);
   sv('fb','');
   sv('hud', hudTxt());
-  var L=['①','②','③','④'];
+  var L=['1)','2)','3)','4)'];
   for(var i=0;i<4;i++){
-    var bg=ge('cbg'+i),tx=ge('ctx'+i);
-    if(bg){bg.setAttribute('material','color','#1a1510');bg.setAttribute('material','emissive','#000000');bg.setAttribute('material','emissiveIntensity','0');}
-    if(tx) tx.setAttribute('value',L[i]+'  '+q.c[i]);
+    var bg=ge('cbg'+i), tx=ge('ctx'+i);
+    if(bg){
+      bg.setAttribute('material','color','#1a1510');
+      bg.setAttribute('material','emissive','#000000');
+      bg.setAttribute('material','emissiveIntensity','0');
+    }
+    if(tx) tx.setAttribute('value', L[i]+' '+q.c[i]);
   }
 }
 
 function hudTxt(){
   return lang==='ko'
-    ? 'Q '+(cur+1)+' / '+qs.length+'     정답 '+score+'개'
-    : 'Q '+(cur+1)+' / '+qs.length+'     Score '+score;
+    ? 'Q '+(cur+1)+'/'+qs.length+'  Score: '+score
+    : 'Q '+(cur+1)+'/'+qs.length+'  Score: '+score;
 }
 
 function showResult(){
@@ -188,12 +188,15 @@ function showResult(){
   vis('quiz-panel',false);
   var pct=score/qs.length, ok=pct>=0.8;
   if(ok) openDoors();
-  sv('rtitle', ok?(lang==='ko'?'탈출 성공!':'ESCAPED!'):(lang==='ko'?'탈출 실패':'FAILED'));
+  sv('rtitle', ok
+    ? (lang==='ko'?'Escape!':'Escape!')
+    : (lang==='ko'?'Fail...':'Failed...'));
   ge('rtitle').setAttribute('color', ok?'#5dcaa5':'#f0997b');
-  sv('rscore', score+' / '+qs.length+'  ('+Math.round(pct*100)+'%)');
-  sv('rmsg',   ok?(lang==='ko'?'감옥 문이 열렸습니다!':'The cell door is open!')
-                 :(lang==='ko'?'80% 이상 맞춰야 탈출합니다':'Need 80%+ to escape'));
-  sv('rretry', lang==='ko'?'↺  다시 도전':'↺  Try Again');
+  sv('rscore', score+'/'+qs.length+'  ('+Math.round(pct*100)+'%)');
+  sv('rmsg', ok
+    ? (lang==='ko'?'Door is open! Run!':'Door is open! Run!')
+    : (lang==='ko'?'Need 80%+ to escape':'Need 80%+ to escape'));
+  sv('rretry', lang==='ko'?'Retry':'Retry');
   vis('result-panel',true);
 }
 
@@ -223,56 +226,71 @@ window.addEventListener('load',function(){
 <a-scene
   vr-mode-ui="enabled:true"
   loading-screen="dotsColor:#c8a96e;backgroundColor:#050508"
-  renderer="antialias:true;colorManagement:true">
+  renderer="antialias:true">
 
-  <!-- ══════════════════════════════════════
-       카메라 리그 (조이스틱 이동 붙임)
-  ══════════════════════════════════════ -->
+  <!-- ══════════════════════════
+       한글 폰트 프리로드
+       nanum gothic = 한글 완벽 지원
+  ══════════════════════════ -->
+  <a-assets>
+    <a-asset-item id="nanum"
+      src="https://cdn.jsdelivr.net/gh/nicktacular/aframe-fonts@master/fonts/NotoSansKR-Regular-msdf.json">
+    </a-asset-item>
+  </a-assets>
+
+  <!-- ══════════════════════════
+       카메라 리그
+  ══════════════════════════ -->
   <a-entity id="rig" position="0 0 3" quest-move>
-
-    <!-- 카메라 + 시선 커서 -->
-    <a-camera look-controls="pointerLockEnabled:false" wasd-controls="acceleration:15" position="0 1.65 0">
+    <a-camera look-controls="pointerLockEnabled:false"
+              wasd-controls="acceleration:15"
+              position="0 1.65 0">
+      <!-- 시선 커서 -->
       <a-entity
         cursor="fuse:true;fuseTimeout:1500"
         raycaster="objects:.btn;far:12"
         position="0 0 -1"
         geometry="primitive:ring;radiusInner:0.013;radiusOuter:0.022"
         material="color:#c8a96e;shader:flat;opacity:0.9">
-        <a-animation attribute="scale" begin="fusing" from="1 1 1" to="0.1 0.1 0.1" dur="1500" easing="easeInCubic"></a-animation>
-        <a-animation attribute="scale" begin="click"  from="0.1 0.1 0.1" to="1 1 1" dur="150"></a-animation>
-        <a-animation attribute="material.color" begin="fusing" from="#c8a96e" to="#5dcaa5" dur="1500"></a-animation>
-        <a-animation attribute="material.color" begin="click"  from="#5dcaa5" to="#c8a96e" dur="150"></a-animation>
+        <a-animation attribute="scale"
+          begin="fusing" from="1 1 1" to="0.1 0.1 0.1"
+          dur="1500" easing="easeInCubic"></a-animation>
+        <a-animation attribute="scale"
+          begin="click" from="0.1 0.1 0.1" to="1 1 1" dur="150"></a-animation>
+        <a-animation attribute="material.color"
+          begin="fusing" from="#c8a96e" to="#5dcaa5" dur="1500"></a-animation>
+        <a-animation attribute="material.color"
+          begin="click" from="#5dcaa5" to="#c8a96e" dur="150"></a-animation>
       </a-entity>
     </a-camera>
 
-    <!-- 왼쪽 컨트롤러 (이동용, 레이저 표시) -->
-    <a-entity id="lc"
-      oculus-touch-controls="hand:left"
-      raycaster="objects:.floor;showLine:false;far:0.1">
-    </a-entity>
+    <!-- 왼쪽 컨트롤러 (이동) -->
+    <a-entity id="lc" oculus-touch-controls="hand:left"></a-entity>
 
-    <!-- 오른쪽 컨트롤러 (버튼 선택용 레이저) -->
+    <!-- 오른쪽 컨트롤러 (버튼 선택 레이저)
+         objects:.btn 만 타겟 → 텍스트 엘리먼트는 제외됨 -->
     <a-entity id="rc"
       oculus-touch-controls="hand:right"
       laser-controls="hand:right"
-      raycaster="objects:.btn;showLine:true;lineColor:#c8a96e;lineOpacity:0.7;far:12">
+      raycaster="objects:.btn;showLine:true;lineColor:#c8a96e;lineOpacity:0.75;far:12">
     </a-entity>
-
   </a-entity>
 
-  <!-- ══════════════════════════════════════
+  <!-- ══════════════════════════
        조명
-  ══════════════════════════════════════ -->
+  ══════════════════════════ -->
   <a-entity light="type:ambient;color:#120e08;intensity:0.85"></a-entity>
-  <a-entity position="0 2.8 0" light="type:point;color:#e07830;intensity:2.4;distance:12;decay:2">
-    <a-animation attribute="light.intensity" from="2.4" to="1.4" dur="200" direction="alternate" repeat="indefinite"></a-animation>
+  <a-entity position="0 2.8 0"
+    light="type:point;color:#e07830;intensity:2.4;distance:12;decay:2">
+    <a-animation attribute="light.intensity"
+      from="2.4" to="1.4" dur="200" direction="alternate" repeat="indefinite"></a-animation>
   </a-entity>
   <a-entity position="-3.3 2.4 -2" light="type:point;color:#c06020;intensity:0.8;distance:6"></a-entity>
   <a-entity position=" 3.3 2.4  1" light="type:point;color:#b05818;intensity:0.7;distance:5"></a-entity>
 
-  <!-- ══════════════════════════════════════
-       방 구조
-  ══════════════════════════════════════ -->
+  <!-- ══════════════════════════
+       방
+  ══════════════════════════ -->
   <a-box class="floor" position="0 -0.05 0" width="7.6" height="0.1" depth="11.6"
     material="color:#1c1812;roughness:1"></a-box>
   <a-box position="0 3.65 0"  width="8"   height="0.12" depth="12"  material="color:#141210;roughness:1"></a-box>
@@ -280,17 +298,16 @@ window.addEventListener('load',function(){
   <a-box position="-4 1.8 0"  width="0.3" height="3.72" depth="12"  material="color:#241e18;roughness:0.95"></a-box>
   <a-box position=" 4 1.8 0"  width="0.3" height="3.72" depth="12"  material="color:#241e18;roughness:0.95"></a-box>
   <a-box position="0 1.8  6"  width="8"   height="3.72" depth="0.3" material="color:#1e1a14;roughness:0.97"></a-box>
-  <!-- 벽돌 줄 -->
   <a-box position="0 0.9 -5.85" width="8" height="0.04" depth="0.04" material="color:#181410;roughness:1"></a-box>
   <a-box position="0 1.8 -5.85" width="8" height="0.04" depth="0.04" material="color:#181410;roughness:1"></a-box>
   <a-box position="0 2.7 -5.85" width="8" height="0.04" depth="0.04" material="color:#181410;roughness:1"></a-box>
 
-  <!-- ══════════════════════════════════════
+  <!-- ══════════════════════════
        감옥 문
-  ══════════════════════════════════════ -->
+  ══════════════════════════ -->
   <a-box position="-1.22 1.8 4.88" width="0.14" height="3.65" depth="0.14" material="color:#3a3028;roughness:0.5;metalness:0.8"></a-box>
   <a-box position=" 1.22 1.8 4.88" width="0.14" height="3.65" depth="0.14" material="color:#3a3028;roughness:0.5;metalness:0.8"></a-box>
-  <a-box position="0 3.25 4.88"    width="2.5"  height="0.14" depth="0.14" material="color:#3a3028;roughness:0.5;metalness:0.8"></a-box>
+  <a-box position="0 3.25 4.88" width="2.5" height="0.14" depth="0.14"     material="color:#3a3028;roughness:0.5;metalness:0.8"></a-box>
 
   <a-entity id="door-left" position="-1.15 0 4.88">
     <a-entity position="0.58 1.65 0">
@@ -302,7 +319,6 @@ window.addEventListener('load',function(){
       <a-box width="1.12" height="0.06" depth="0.06" position="-0.09 -1.3 0" material="color:#3a3028;metalness:0.85"></a-box>
     </a-entity>
   </a-entity>
-
   <a-entity id="door-right" position="1.15 0 4.88">
     <a-entity position="-0.58 1.65 0">
       <a-cylinder radius="0.04" height="3.3" position=" 0.44 0 0" material="color:#2e2820;roughness:0.5;metalness:0.9"></a-cylinder>
@@ -313,8 +329,6 @@ window.addEventListener('load',function(){
       <a-box width="1.12" height="0.06" depth="0.06" position="0.09 -1.3 0" material="color:#3a3028;metalness:0.85"></a-box>
     </a-entity>
   </a-entity>
-
-  <!-- 문 옆 창살 -->
   <a-entity position="-2.7 1.8 4.88">
     <a-cylinder radius="0.04" height="3.3" position="-0.5 0 0" material="color:#2e2820;roughness:0.5;metalness:0.9"></a-cylinder>
     <a-cylinder radius="0.04" height="3.3" position=" 0   0 0" material="color:#2e2820;roughness:0.5;metalness:0.9"></a-cylinder>
@@ -326,9 +340,7 @@ window.addEventListener('load',function(){
     <a-cylinder radius="0.04" height="3.3" position=" 0.5 0 0" material="color:#2e2820;roughness:0.5;metalness:0.9"></a-cylinder>
   </a-entity>
 
-  <!-- ══════════════════════════════════════
-       소품
-  ══════════════════════════════════════ -->
+  <!-- 소품 -->
   <a-box position="-2.8 0.22 -3.5" width="1" height="0.2" depth="2.2" material="color:#4a3520;roughness:0.95"></a-box>
   <a-box position="-2.8 0.06 -4.5" width="1.1" height="0.12" depth="0.14" material="color:#382810;roughness:1"></a-box>
   <a-cylinder position="2.6 0.22 -4.2" radius="0.18" height="0.38" material="color:#5a4a30;roughness:0.8;metalness:0.35"></a-cylinder>
@@ -337,101 +349,149 @@ window.addEventListener('load',function(){
   <a-box    position=" 3.72 2.5   0.5" width="0.08" height="0.28" depth="0.08" material="color:#5a3a20;roughness:0.9"></a-box>
   <a-sphere position=" 3.72 2.68  0.5" radius="0.1" material="color:#f09040;emissive:#f09040;emissiveIntensity:1"></a-sphere>
 
-  <!-- ══════════════════════════════════════════════════
-       언어 선택 패널 (뒷벽, 눈높이 y=1.65)
-  ══════════════════════════════════════════════════ -->
+  <!-- ════════════════════════════════════════════
+       언어 선택 패널
+       - a-text 에 class="btn" 없음 → 레이저 통과
+       - a-box 에만 class="btn" → 레이저 정확히 박스만 받음
+  ════════════════════════════════════════════ -->
   <a-entity id="lang-panel" position="0 1.65 -5.68" visible="false">
-    <a-box width="3.4" height="2.3" depth="0.05"
+    <a-box width="3.4" height="2.2" depth="0.05"
       material="color:#0a0805;roughness:0.95;opacity:0.98"></a-box>
-    <a-box width="3.44" height="2.34" depth="0.03"
+    <a-box width="3.44" height="2.24" depth="0.03"
       material="color:#c8a96e;opacity:0.55" position="0 0 -0.01"></a-box>
 
+    <!-- 타이틀: 영어만 사용 (폰트 깨짐 방지) -->
     <a-text value="PRISON ESCAPE VR"
-      align="center" color="#c8a96e" width="3.8" position="0 0.84 0.04" font="mozillavr"></a-text>
-    <a-text value="감옥 탈출 VR 퀴즈"
-      align="center" color="#7a6040" width="2.6" position="0 0.52 0.04"></a-text>
-    <a-text value="언어 선택 / Select Language"
-      align="center" color="#4a4030" width="2.4" position="0 0.24 0.04"></a-text>
+      align="center" color="#c8a96e" width="3.6"
+      position="0 0.78 0.04"></a-text>
+    <a-text value="Select Language"
+      align="center" color="#7a6040" width="2.4"
+      position="0 0.42 0.04"></a-text>
 
-    <!-- 한국어 버튼 -->
-    <a-box width="1.2" height="0.54" depth="0.1" position="-0.75 -0.15 0.04"
+    <!-- 한국어 버튼: a-box만 .btn, a-text는 클래스 없음 -->
+    <a-box width="1.2" height="0.54" depth="0.1" position="-0.75 -0.08 0.04"
       material="color:#201808;roughness:0.7"
       class="btn" vrbtn="action:lang_ko"></a-box>
-    <a-text value="한국어" align="center" color="#c8a96e" width="1.5" position="-0.75 -0.15 0.1"></a-text>
+    <a-text value="Korean"
+      align="center" color="#c8a96e" width="1.4"
+      position="-0.75 -0.08 0.11"></a-text>
 
     <!-- 영어 버튼 -->
-    <a-box width="1.2" height="0.54" depth="0.1" position="0.75 -0.15 0.04"
+    <a-box width="1.2" height="0.54" depth="0.1" position="0.75 -0.08 0.04"
       material="color:#201808;roughness:0.7"
       class="btn" vrbtn="action:lang_en"></a-box>
-    <a-text value="English" align="center" color="#c8a96e" width="1.5" position="0.75 -0.15 0.1"></a-text>
+    <a-text value="English"
+      align="center" color="#c8a96e" width="1.4"
+      position="0.75 -0.08 0.11"></a-text>
 
-    <a-text value="오른쪽 컨트롤러 레이저 → 버튼 겨냥 → 트리거"
-      align="center" color="#353020" width="3.0" position="0 -0.64 0.04"></a-text>
-    <a-text value="Right controller laser → aim → pull trigger"
-      align="center" color="#2a2818" width="3.0" position="0 -0.84 0.04"></a-text>
+    <a-text value="Right laser + trigger to select"
+      align="center" color="#353020" width="3.0"
+      position="0 -0.7 0.04"></a-text>
   </a-entity>
 
-  <!-- ══════════════════════════════════════════════════
-       퀴즈 패널 (뒷벽, 눈높이 y=1.65)
-  ══════════════════════════════════════════════════ -->
+  <!-- ════════════════════════════════════════════
+       퀴즈 패널
+       핵심: a-box(.btn) z=0.04, a-text z=0.12
+       텍스트가 박스보다 앞에 있으면 레이저 차단됨
+       → 텍스트를 박스보다 조금만 앞으로 (0.08 차이)
+          하지만 텍스트엔 class="btn" 없어서 raycaster 무시
+  ════════════════════════════════════════════ -->
   <a-entity id="quiz-panel" position="0 1.65 -5.68" visible="false">
-    <a-box width="4.0" height="3.1" depth="0.05"
+    <a-box width="4.0" height="3.0" depth="0.05"
       material="color:#0a0805;roughness:0.95;opacity:0.98"></a-box>
-    <a-box width="4.04" height="3.14" depth="0.03"
+    <a-box width="4.04" height="3.04" depth="0.03"
       material="color:#c8a96e;opacity:0.45" position="0 0 -0.01"></a-box>
 
     <!-- HUD -->
-    <a-text id="hud" value="Q 1/5  정답 0개"
-      align="center" color="#6a5a30" width="3.8" position="0 1.4 0.04"></a-text>
+    <a-text id="hud" value="Q 1/5  Score: 0"
+      align="center" color="#6a5a30" width="3.8"
+      position="0 1.35 0.04"></a-text>
 
-    <!-- 문제 (눈높이 위쪽 → 패널 중앙 위) -->
+    <!-- 문제 텍스트 (한글 포함 가능 — a-text는 canvas 렌더) -->
     <a-text id="qtxt" value=""
-      align="center" color="#e8dcc8" width="3.5" wrap-count="20" position="0 0.9 0.04"></a-text>
+      align="center" color="#e8dcc8" width="3.4" wrap-count="20"
+      position="0 0.85 0.04"></a-text>
 
-    <!-- 보기 4개: 패널 중앙 아래, 눈높이 근처 -->
-    <a-box id="cbg0" width="1.82" height="0.5" depth="0.09" position="-1.02 0.32 0.04"
-      material="color:#1a1510;roughness:0.8" class="btn" vrbtn="action:choice_0"></a-box>
-    <a-text id="ctx0" value="" align="center" color="#c8a96e" width="1.85" wrap-count="15" position="-1.02 0.32 0.11"></a-text>
+    <!-- ─── 보기 4개 ───
+         구조: a-box (class="btn", z=0.04) + a-text (클래스 없음, z=0.11)
+         텍스트가 박스보다 앞이지만 raycaster 대상이 아니므로 클릭은 박스가 받음 -->
 
-    <a-box id="cbg1" width="1.82" height="0.5" depth="0.09" position="1.02 0.32 0.04"
-      material="color:#1a1510;roughness:0.8" class="btn" vrbtn="action:choice_1"></a-box>
-    <a-text id="ctx1" value="" align="center" color="#c8a96e" width="1.85" wrap-count="15" position="1.02 0.32 0.11"></a-text>
+    <!-- ① 왼쪽 위 -->
+    <a-box id="cbg0" width="1.82" height="0.5" depth="0.09"
+      position="-1.02 0.28 0.04"
+      material="color:#1a1510;roughness:0.8"
+      class="btn" vrbtn="action:choice_0"></a-box>
+    <a-text id="ctx0" value="1) ..."
+      align="center" color="#c8a96e" width="1.75" wrap-count="14"
+      position="-1.02 0.28 0.11"></a-text>
 
-    <a-box id="cbg2" width="1.82" height="0.5" depth="0.09" position="-1.02 -0.26 0.04"
-      material="color:#1a1510;roughness:0.8" class="btn" vrbtn="action:choice_2"></a-box>
-    <a-text id="ctx2" value="" align="center" color="#c8a96e" width="1.85" wrap-count="15" position="-1.02 -0.26 0.11"></a-text>
+    <!-- ② 오른쪽 위 -->
+    <a-box id="cbg1" width="1.82" height="0.5" depth="0.09"
+      position="1.02 0.28 0.04"
+      material="color:#1a1510;roughness:0.8"
+      class="btn" vrbtn="action:choice_1"></a-box>
+    <a-text id="ctx1" value="2) ..."
+      align="center" color="#c8a96e" width="1.75" wrap-count="14"
+      position="1.02 0.28 0.11"></a-text>
 
-    <a-box id="cbg3" width="1.82" height="0.5" depth="0.09" position="1.02 -0.26 0.04"
-      material="color:#1a1510;roughness:0.8" class="btn" vrbtn="action:choice_3"></a-box>
-    <a-text id="ctx3" value="" align="center" color="#c8a96e" width="1.85" wrap-count="15" position="1.02 -0.26 0.11"></a-text>
+    <!-- ③ 왼쪽 아래 -->
+    <a-box id="cbg2" width="1.82" height="0.5" depth="0.09"
+      position="-1.02 -0.3 0.04"
+      material="color:#1a1510;roughness:0.8"
+      class="btn" vrbtn="action:choice_2"></a-box>
+    <a-text id="ctx2" value="3) ..."
+      align="center" color="#c8a96e" width="1.75" wrap-count="14"
+      position="-1.02 -0.3 0.11"></a-text>
+
+    <!-- ④ 오른쪽 아래 -->
+    <a-box id="cbg3" width="1.82" height="0.5" depth="0.09"
+      position="1.02 -0.3 0.04"
+      material="color:#1a1510;roughness:0.8"
+      class="btn" vrbtn="action:choice_3"></a-box>
+    <a-text id="ctx3" value="4) ..."
+      align="center" color="#c8a96e" width="1.75" wrap-count="14"
+      position="1.02 -0.3 0.11"></a-text>
 
     <!-- 피드백 -->
-    <a-text id="fb" value="" align="center" color="#5dcaa5" width="3.6" position="0 -0.76 0.04"></a-text>
+    <a-text id="fb" value=""
+      align="center" color="#5dcaa5" width="3.6"
+      position="0 -0.82 0.04"></a-text>
 
     <!-- 조작 안내 -->
-    <a-text value="오른쪽 레이저 겨냥 + 트리거  |  왼쪽 조이스틱 이동  |  오른쪽 조이스틱 회전"
-      align="center" color="#252018" width="3.8" position="0 -1.12 0.04"></a-text>
+    <a-text value="Right laser + trigger | Left stick: move | Right stick: turn"
+      align="center" color="#252018" width="3.8"
+      position="0 -1.15 0.04"></a-text>
   </a-entity>
 
-  <!-- ══════════════════════════════════════════════════
-       결과 패널 (방 중앙 허공, 눈높이)
-  ══════════════════════════════════════════════════ -->
+  <!-- ════════════════════════════════════════════
+       결과 패널
+  ════════════════════════════════════════════ -->
   <a-entity id="result-panel" position="0 1.65 -2" visible="false">
-    <a-box width="3.2" height="2.7" depth="0.07"
+    <a-box width="3.0" height="2.6" depth="0.07"
       material="color:#060408;roughness:0.95;opacity:0.98"></a-box>
-    <a-box width="3.24" height="2.74" depth="0.05"
+    <a-box width="3.04" height="2.64" depth="0.05"
       material="color:#c8a96e;opacity:0.6" position="0 0 -0.02"></a-box>
 
-    <a-text id="rtitle" value="" align="center" color="#5dcaa5" width="3.4" position="0 0.95 0.06" font="mozillavr"></a-text>
-    <a-text id="rscore" value="" align="center" color="#e8dcc8" width="3.0" position="0 0.52 0.06"></a-text>
-    <a-text id="rmsg"   value="" align="center" color="#7a7060" width="2.6" position="0 0.2  0.06"></a-text>
+    <a-text id="rtitle" value=""
+      align="center" color="#5dcaa5" width="3.2"
+      position="0 0.88 0.06"></a-text>
+    <a-text id="rscore" value=""
+      align="center" color="#e8dcc8" width="2.8"
+      position="0 0.48 0.06"></a-text>
+    <a-text id="rmsg" value=""
+      align="center" color="#7a7060" width="2.6"
+      position="0 0.16 0.06"></a-text>
 
-    <a-box width="2.0" height="0.54" depth="0.09" position="0 -0.28 0.06"
-      material="color:#201808;roughness:0.7" class="btn" vrbtn="action:retry"></a-box>
-    <a-text id="rretry" value="↺  다시 도전" align="center" color="#c8a96e" width="2.4" position="0 -0.28 0.13"></a-text>
+    <a-box width="1.8" height="0.52" depth="0.09" position="0 -0.32 0.06"
+      material="color:#201808;roughness:0.7"
+      class="btn" vrbtn="action:retry"></a-box>
+    <a-text id="rretry" value="Retry"
+      align="center" color="#c8a96e" width="2.2"
+      position="0 -0.32 0.13"></a-text>
 
-    <a-text value="오른쪽 레이저로 버튼 겨냥 후 트리거"
-      align="center" color="#252018" width="3.0" position="0 -0.82 0.06"></a-text>
+    <a-text value="Right laser + trigger to retry"
+      align="center" color="#252018" width="2.8"
+      position="0 -0.82 0.06"></a-text>
   </a-entity>
 
 </a-scene>
