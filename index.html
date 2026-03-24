@@ -1,224 +1,278 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html>
 <head>
 <meta charset="UTF-8">
-<title>Prison Escape VR Quiz</title>
+<title>Prison Escape VR</title>
 <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
 <script>
-// ═══════════════════════════════════════════════
-// 퀴즈 데이터
-// 보기 순서 고정 (셔플 없음) → 정답 인덱스 신뢰 가능
-// ═══════════════════════════════════════════════
-const QUIZ = {
+// ════════════════════════════════════════
+// Canvas 텍스트 텍스처 컴포넌트
+// A-Frame 기본 폰트는 한글 불가 → Canvas 2D로 직접 그림
+// ════════════════════════════════════════
+AFRAME.registerComponent('canvas-text', {
+  schema: {
+    value:  {type:'string', default:''},
+    size:   {type:'number', default:48},
+    color:  {type:'string', default:'#ffffff'},
+    bg:     {type:'string', default:'transparent'},
+    bold:   {type:'boolean', default:false}
+  },
+  init: function() {
+    this.canvas = document.createElement('canvas');
+    this.canvas.width  = 1024;
+    this.canvas.height = 128;
+    this.ctx = this.canvas.getContext('2d');
+    this.texture = new THREE.CanvasTexture(this.canvas);
+    this.el.setAttribute('material', {
+      shader: 'flat',
+      src: this.texture,
+      transparent: true,
+      npot: true
+    });
+    this.draw();
+  },
+  update: function() { this.draw(); },
+  draw: function() {
+    var c = this.canvas, ctx = this.ctx, d = this.data;
+    c.width = 1024; c.height = 128;
+    ctx.clearRect(0,0,c.width,c.height);
+    if (d.bg !== 'transparent') {
+      ctx.fillStyle = d.bg;
+      ctx.fillRect(0,0,c.width,c.height);
+    }
+    ctx.fillStyle = d.color;
+    ctx.font = (d.bold?'bold ':'')+d.size+'px "Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(d.value, c.width/2, c.height/2);
+    if (this.texture) this.texture.needsUpdate = true;
+  }
+});
+
+// ════════════════════════════════════════
+// 버튼 컴포넌트 (박스만 클릭 대상)
+// ════════════════════════════════════════
+AFRAME.registerComponent('vrbtn', {
+  schema: {action:{type:'string',default:''}},
+  init: function() {
+    var el = this.el, act = this.data.action;
+    el.addEventListener('mouseenter', function() {
+      el.setAttribute('material','emissive','#a07818');
+      el.setAttribute('material','emissiveIntensity','0.6');
+    });
+    el.addEventListener('mouseleave', function() {
+      el.setAttribute('material','emissive','#000000');
+      el.setAttribute('material','emissiveIntensity','0');
+    });
+    el.addEventListener('click', function() { dispatch(act); });
+  }
+});
+
+// ════════════════════════════════════════
+// 조이스틱 이동 컴포넌트
+// axismove 이벤트는 각 컨트롤러 el에서 발생
+// ════════════════════════════════════════
+AFRAME.registerComponent('quest-move', {
+  init: function() {
+    this.lx = 0; this.ly = 0;
+    this.rx = 0;
+    var self = this;
+
+    // 컨트롤러가 추가된 후 이벤트 바인딩
+    this.el.sceneEl.addEventListener('loaded', function() {
+      var lc = document.getElementById('lc');
+      var rc = document.getElementById('rc');
+      if (lc) {
+        lc.addEventListener('axismove', function(e) {
+          // oculus touch: axis[2]=좌우, axis[3]=앞뒤
+          self.lx = e.detail.axis[2] || 0;
+          self.ly = e.detail.axis[3] || 0;
+        });
+      }
+      if (rc) {
+        rc.addEventListener('axismove', function(e) {
+          self.rx = e.detail.axis[2] || 0;
+        });
+      }
+    });
+  },
+  tick: function(time, delta) {
+    if (!delta || delta > 200) return;
+    var speed = delta * 0.005;
+    var rotSpeed = delta * 0.003;
+
+    var rig = this.el;
+    var cam = document.querySelector('[camera]');
+    if (!cam) return;
+
+    // 카메라+리그 합산 y회전으로 전진 방향 계산
+    var yaw = cam.object3D.rotation.y + rig.object3D.rotation.y;
+    var sinY = Math.sin(yaw), cosY = Math.cos(yaw);
+
+    var lx = this.lx, ly = this.ly;
+    var deadzone = 0.15;
+
+    // 왼쪽 조이스틱: 이동
+    if (Math.abs(lx) > deadzone || Math.abs(ly) > deadzone) {
+      var pos = rig.object3D.position;
+      // 앞뒤 (ly 음수=앞)
+      pos.x += (-sinY) * (-ly) * speed + cosY * lx * speed;
+      pos.z += (-cosY) * (-ly) * speed + (-sinY) * lx * speed;
+      // 방 경계
+      pos.x = Math.max(-3.4, Math.min(3.4, pos.x));
+      pos.z = Math.max(-5.4, Math.min(4.5, pos.z));
+    }
+
+    // 오른쪽 조이스틱: 좌우 회전
+    if (Math.abs(this.rx) > deadzone) {
+      rig.object3D.rotation.y -= this.rx * rotSpeed;
+    }
+  }
+});
+
+// ════════════════════════════════════════
+// 퀴즈 데이터 (보기 순서 고정)
+// ════════════════════════════════════════
+var QUIZ = {
   ko:[
-    {q:"대한민국의 수도는?",        c:["부산","서울","인천","대전"],            a:1},
-    {q:"1 + 1 x 2 = ?",           c:["4","3","2","6"],                     a:1},
-    {q:"물의 끓는점은? (C)",        c:["90","110","100","80"],               a:2},
-    {q:"가장 큰 대륙은?",           c:["아프리카","유럽","아시아","아메리카"],    a:2},
-    {q:"사과를 영어로 하면?",        c:["Banana","Mango","Grape","Apple"],    a:3}
+    {q:'대한민국의 수도는?',       c:['부산','서울','인천','대전'],          a:1},
+    {q:'1 + 1 × 2 = ?',          c:['4','3','2','6'],                  a:1},
+    {q:'물의 끓는점은? (°C)',      c:['90','110','100','80'],            a:2},
+    {q:'세계에서 가장 큰 대륙은?', c:['아프리카','유럽','아시아','아메리카'], a:2},
+    {q:"영어로 '사과'는?",         c:['Banana','Mango','Grape','Apple'], a:3}
   ],
   en:[
-    {q:"Capital of South Korea?",     c:["Busan","Seoul","Incheon","Daejeon"],  a:1},
-    {q:"1 + 1 x 2 = ?",              c:["4","3","2","6"],                      a:1},
-    {q:"Boiling point of water (C)?", c:["90","110","100","80"],               a:2},
-    {q:"Largest continent?",          c:["Africa","Europe","Asia","America"],   a:2},
-    {q:"Apple in Korean?",            c:["Barana","Mango","Grape","Sagwa"],     a:3}
+    {q:'Capital of South Korea?',     c:['Busan','Seoul','Incheon','Daejeon'], a:1},
+    {q:'1 + 1 x 2 = ?',              c:['4','3','2','6'],                     a:1},
+    {q:'Boiling point of water (C)?', c:['90','110','100','80'],               a:2},
+    {q:'Largest continent?',          c:['Africa','Europe','Asia','America'],  a:2},
+    {q:"'사과' in English?",          c:['Banana','Mango','Grape','Apple'],    a:3}
   ]
 };
 
-// ═══════════════════════════════════════════════
-// 상태
-// ═══════════════════════════════════════════════
+// ════════════════════════════════════════
+// 게임 상태
+// ════════════════════════════════════════
 var lang='ko', qs=[], cur=0, score=0, answered=false, phase='lang';
 
-// ═══════════════════════════════════════════════
-// 컴포넌트 등록
-// ═══════════════════════════════════════════════
-document.addEventListener('DOMContentLoaded', function(){
-
-  // 버튼 클릭 컴포넌트
-  AFRAME.registerComponent('vrbtn', {
-    schema: {action:{type:'string',default:''}},
-    init: function(){
-      var el=this.el, act=this.data.action;
-      el.addEventListener('mouseenter',function(){
-        el.setAttribute('material','emissive','#a07818');
-        el.setAttribute('material','emissiveIntensity','0.6');
-      });
-      el.addEventListener('mouseleave',function(){
-        el.setAttribute('material','emissive','#000000');
-        el.setAttribute('material','emissiveIntensity','0');
-      });
-      el.addEventListener('click',function(){ dispatch(act); });
-    }
-  });
-
-  // Quest 조이스틱 이동 컴포넌트
-  AFRAME.registerComponent('quest-move',{
-    init:function(){
-      this.la={x:0,y:0}; this.ra={x:0,y:0};
-      var self=this;
-      window.addEventListener('axismove',function(e){
-        var id=e.target.id;
-        if(id==='lc'){ self.la.x=e.detail.axis[2]||0; self.la.y=e.detail.axis[3]||0; }
-        if(id==='rc'){ self.ra.x=e.detail.axis[2]||0; self.ra.y=e.detail.axis[3]||0; }
-      });
-    },
-    tick:function(t,dt){
-      if(!dt) return;
-      var s=dt*0.004, rs=dt*0.07;
-      var rig=this.el;
-      var cam=document.querySelector('[camera]');
-      if(!cam) return;
-      var cy=cam.object3D.rotation.y+rig.object3D.rotation.y;
-      var fx=-Math.sin(cy), fz=-Math.cos(cy);
-      var rx= Math.cos(cy), rz=-Math.sin(cy);
-      var lx=this.la.x, ly=this.la.y;
-      if(Math.abs(lx)>0.12||Math.abs(ly)>0.12){
-        var p=rig.object3D.position;
-        p.x+=( fx*(-ly)+rx*lx)*s;
-        p.z+=(fz*(-ly)+rz*lx)*s;
-        p.x=Math.max(-3.4,Math.min(3.4,p.x));
-        p.z=Math.max(-5.4,Math.min(4.4,p.z));
-      }
-      var rx2=this.ra.x;
-      if(Math.abs(rx2)>0.15){
-        rig.object3D.rotation.y-=rx2*rs*(Math.PI/180);
-      }
-    }
-  });
-
-});
-
-// ═══════════════════════════════════════════════
-// 게임 로직
-// ═══════════════════════════════════════════════
-function dispatch(act){
-  if(!act) return;
-  if(act==='lang_ko'){lang='ko';startQuiz();}
-  else if(act==='lang_en'){lang='en';startQuiz();}
-  else if(act==='retry'){startQuiz();}
-  else if(act.startsWith('choice_')){selectAnswer(parseInt(act.split('_')[1]));}
+function dispatch(act) {
+  if (!act) return;
+  if (act==='lang_ko') { lang='ko'; startQuiz(); }
+  else if (act==='lang_en') { lang='en'; startQuiz(); }
+  else if (act==='retry') { startQuiz(); }
+  else if (act.startsWith('choice_')) { selectAnswer(parseInt(act.split('_')[1])); }
 }
 
-function startQuiz(){
+function startQuiz() {
   phase='quiz';
-  // 문제 배열만 셔플 (보기 순서와 answer 인덱스는 절대 건드리지 않음)
-  qs=QUIZ[lang].slice();
-  for(var i=qs.length-1;i>0;i--){
-    var j=Math.floor(Math.random()*(i+1));
-    var tmp=qs[i]; qs[i]=qs[j]; qs[j]=tmp;
+  // 문제 순서만 셔플 (보기·정답 인덱스 절대 변경 안함)
+  qs = QUIZ[lang].slice();
+  for (var i=qs.length-1; i>0; i--) {
+    var j = Math.floor(Math.random()*(i+1));
+    var t=qs[i]; qs[i]=qs[j]; qs[j]=t;
   }
   cur=0; score=0; answered=false;
-  vis('lang-panel',false);
-  vis('result-panel',false);
-  vis('quiz-panel',true);
+  vis('lang-panel', false);
+  vis('result-panel', false);
+  vis('quiz-panel', true);
   resetDoors();
   renderQ();
 }
 
-function selectAnswer(idx){
-  if(answered||phase!=='quiz') return;
-  answered=true;
-  var q=qs[cur];
-  var correct=(idx===q.a);
-  if(correct) score++;
+function selectAnswer(idx) {
+  if (answered || phase!=='quiz') return;
+  answered = true;
+  var q = qs[cur];
+  var ok = (idx === q.a);
+  if (ok) score++;
 
-  for(var i=0;i<4;i++){
-    var bg=ge('cbg'+i);
-    if(!bg) continue;
-    if(i===q.a){
-      // 정답 강조 (녹색)
+  for (var i=0; i<4; i++) {
+    var bg = ge('cbg'+i);
+    if (!bg) continue;
+    if (i === q.a) {
       bg.setAttribute('material','color','#0d2e22');
       bg.setAttribute('material','emissive','#1d9e75');
-      bg.setAttribute('material','emissiveIntensity','0.65');
-    } else if(i===idx){
-      // 오답 선택 강조 (빨간색)
+      bg.setAttribute('material','emissiveIntensity','0.7');
+    } else if (i === idx) {
       bg.setAttribute('material','color','#2e0e08');
       bg.setAttribute('material','emissive','#d85a30');
       bg.setAttribute('material','emissiveIntensity','0.5');
     }
   }
-  // 보기 텍스트에 정답 표시
-  var ct=ge('ctx'+q.a);
-  if(ct) ct.setAttribute('value','V '+qs[cur].c[q.a]);
+
+  // 정답 텍스트에 체크 표시
+  ctSet('ctx'+q.a, '✓ '+q.c[q.a], '#5dcaa5');
 
   // 피드백
-  var fb=ge('fb');
-  if(fb){
-    fb.setAttribute('value', correct
-      ? (lang==='ko'?'정답!':'Correct!')
-      : (lang==='ko'?'오답. 정답: '+q.c[q.a]:'Wrong. Answer: '+q.c[q.a]));
-    fb.setAttribute('color', correct?'#5dcaa5':'#f0997b');
-  }
-  sv('hud', hudTxt());
+  ctSet('fb', ok
+    ? (lang==='ko'?'✓ 정답!':'✓ Correct!')
+    : (lang==='ko'?'✗ 오답  정답: '+q.c[q.a]:'✗ Wrong  Ans: '+q.c[q.a]),
+    ok?'#5dcaa5':'#f0997b');
 
-  setTimeout(function(){
+  ctSet('hud', 'Q '+(cur+1)+'/'+qs.length+'   Score: '+score, '#8a7040');
+
+  setTimeout(function() {
     cur++;
-    if(cur<qs.length){answered=false;renderQ();}
+    if (cur < qs.length) { answered=false; renderQ(); }
     else showResult();
-  },1900);
+  }, 1900);
 }
 
-function renderQ(){
-  var q=qs[cur];
-  sv('qtxt', q.q);
-  sv('fb','');
-  sv('hud', hudTxt());
-  var L=['1)','2)','3)','4)'];
-  for(var i=0;i<4;i++){
-    var bg=ge('cbg'+i), tx=ge('ctx'+i);
-    if(bg){
+function renderQ() {
+  var q = qs[cur];
+  ctSet('qtxt', q.q, '#e8dcc8');
+  ctSet('fb', '', '#5dcaa5');
+  ctSet('hud', 'Q '+(cur+1)+'/'+qs.length+'   Score: '+score, '#8a7040');
+  var L = ['①','②','③','④'];
+  for (var i=0; i<4; i++) {
+    var bg=ge('cbg'+i);
+    if (bg) {
       bg.setAttribute('material','color','#1a1510');
       bg.setAttribute('material','emissive','#000000');
       bg.setAttribute('material','emissiveIntensity','0');
     }
-    if(tx) tx.setAttribute('value', L[i]+' '+q.c[i]);
+    ctSet('ctx'+i, L[i]+' '+q.c[i], '#c8a96e');
   }
 }
 
-function hudTxt(){
-  return lang==='ko'
-    ? 'Q '+(cur+1)+'/'+qs.length+'  Score: '+score
-    : 'Q '+(cur+1)+'/'+qs.length+'  Score: '+score;
-}
-
-function showResult(){
+function showResult() {
   phase='result';
-  vis('quiz-panel',false);
-  var pct=score/qs.length, ok=pct>=0.8;
-  if(ok) openDoors();
-  sv('rtitle', ok
-    ? (lang==='ko'?'Escape!':'Escape!')
-    : (lang==='ko'?'Fail...':'Failed...'));
-  ge('rtitle').setAttribute('color', ok?'#5dcaa5':'#f0997b');
-  sv('rscore', score+'/'+qs.length+'  ('+Math.round(pct*100)+'%)');
-  sv('rmsg', ok
-    ? (lang==='ko'?'Door is open! Run!':'Door is open! Run!')
-    : (lang==='ko'?'Need 80%+ to escape':'Need 80%+ to escape'));
-  sv('rretry', lang==='ko'?'Retry':'Retry');
-  vis('result-panel',true);
+  vis('quiz-panel', false);
+  var pct = score/qs.length, ok = pct>=0.8;
+  if (ok) openDoors();
+  ctSet('rtitle', ok?(lang==='ko'?'탈출 성공! 🔓':'Escaped! 🔓'):(lang==='ko'?'탈출 실패 ⛓':'Failed ⛓'), ok?'#5dcaa5':'#f0997b');
+  ctSet('rscore', score+'/'+qs.length+'  ('+Math.round(pct*100)+'%)', '#e8dcc8');
+  ctSet('rmsg',   ok?(lang==='ko'?'감옥 문이 열렸다!':'The door is open!'):(lang==='ko'?'80% 이상 맞춰야 탈출 가능':'Need 80%+ to escape'), '#888070');
+  ctSet('rretry', lang==='ko'?'↺ 다시 도전':'↺ Try Again', '#c8a96e');
+  vis('result-panel', true);
 }
 
-function openDoors(){
-  var dl=ge('door-left'),dr=ge('door-right');
-  if(dl) dl.setAttribute('animation','property:rotation;to:0 -90 0;dur:2000;easing:easeInOutQuad');
-  if(dr) dr.setAttribute('animation','property:rotation;to:0 90 0;dur:2000;easing:easeInOutQuad');
+function openDoors() {
+  var dl=ge('door-left'), dr=ge('door-right');
+  if (dl) dl.setAttribute('animation','property:rotation;to:0 -90 0;dur:2000;easing:easeInOutQuad');
+  if (dr) dr.setAttribute('animation','property:rotation;to:0 90 0;dur:2000;easing:easeInOutQuad');
 }
-function resetDoors(){
-  var dl=ge('door-left'),dr=ge('door-right');
-  if(dl){dl.removeAttribute('animation');dl.setAttribute('rotation','0 0 0');}
-  if(dr){dr.removeAttribute('animation');dr.setAttribute('rotation','0 0 0');}
+function resetDoors() {
+  var dl=ge('door-left'), dr=ge('door-right');
+  if (dl) { dl.removeAttribute('animation'); dl.setAttribute('rotation','0 0 0'); }
+  if (dr) { dr.removeAttribute('animation'); dr.setAttribute('rotation','0 0 0'); }
 }
 
-function ge(id){return document.getElementById(id);}
-function sv(id,v){var e=ge(id);if(e)e.setAttribute('value',v);}
-function vis(id,v){var e=ge(id);if(e)e.setAttribute('visible',v?'true':'false');}
+// canvas-text 엘리먼트 값 업데이트
+function ctSet(id, val, color) {
+  var e = ge(id);
+  if (!e) return;
+  e.setAttribute('canvas-text', 'value', val);
+  if (color) e.setAttribute('canvas-text', 'color', color);
+}
 
-window.addEventListener('load',function(){
-  vis('lang-panel',true);
-  vis('quiz-panel',false);
-  vis('result-panel',false);
+function ge(id) { return document.getElementById(id); }
+function vis(id,v) { var e=ge(id); if(e) e.setAttribute('visible',v?'true':'false'); }
+
+window.addEventListener('load', function() {
+  vis('lang-panel', true);
+  vis('quiz-panel', false);
+  vis('result-panel', false);
 });
 </script>
 </head>
@@ -228,87 +282,77 @@ window.addEventListener('load',function(){
   loading-screen="dotsColor:#c8a96e;backgroundColor:#050508"
   renderer="antialias:true">
 
-  <!-- ══════════════════════════
-       한글 폰트 프리로드
-       nanum gothic = 한글 완벽 지원
-  ══════════════════════════ -->
-  <a-assets>
-    <a-asset-item id="nanum"
-      src="https://cdn.jsdelivr.net/gh/nicktacular/aframe-fonts@master/fonts/NotoSansKR-Regular-msdf.json">
-    </a-asset-item>
-  </a-assets>
-
-  <!-- ══════════════════════════
-       카메라 리그
-  ══════════════════════════ -->
+  <!-- ══════════════════════
+       카메라 리그 + 컨트롤러
+  ══════════════════════ -->
   <a-entity id="rig" position="0 0 3" quest-move>
+
     <a-camera look-controls="pointerLockEnabled:false"
               wasd-controls="acceleration:15"
               position="0 1.65 0">
-      <!-- 시선 커서 -->
+      <!-- 시선 커서: .btn 클래스 박스만 타겟 -->
       <a-entity
         cursor="fuse:true;fuseTimeout:1500"
         raycaster="objects:.btn;far:12"
         position="0 0 -1"
         geometry="primitive:ring;radiusInner:0.013;radiusOuter:0.022"
         material="color:#c8a96e;shader:flat;opacity:0.9">
-        <a-animation attribute="scale"
-          begin="fusing" from="1 1 1" to="0.1 0.1 0.1"
-          dur="1500" easing="easeInCubic"></a-animation>
-        <a-animation attribute="scale"
-          begin="click" from="0.1 0.1 0.1" to="1 1 1" dur="150"></a-animation>
-        <a-animation attribute="material.color"
-          begin="fusing" from="#c8a96e" to="#5dcaa5" dur="1500"></a-animation>
-        <a-animation attribute="material.color"
-          begin="click" from="#5dcaa5" to="#c8a96e" dur="150"></a-animation>
+        <a-animation attribute="scale" begin="fusing"
+          from="1 1 1" to="0.1 0.1 0.1" dur="1500" easing="easeInCubic"></a-animation>
+        <a-animation attribute="scale" begin="click"
+          from="0.1 0.1 0.1" to="1 1 1" dur="150"></a-animation>
+        <a-animation attribute="material.color" begin="fusing"
+          from="#c8a96e" to="#5dcaa5" dur="1500"></a-animation>
+        <a-animation attribute="material.color" begin="click"
+          from="#5dcaa5" to="#c8a96e" dur="150"></a-animation>
       </a-entity>
     </a-camera>
 
     <!-- 왼쪽 컨트롤러 (이동) -->
     <a-entity id="lc" oculus-touch-controls="hand:left"></a-entity>
 
-    <!-- 오른쪽 컨트롤러 (버튼 선택 레이저)
-         objects:.btn 만 타겟 → 텍스트 엘리먼트는 제외됨 -->
+    <!-- 오른쪽 컨트롤러 (레이저 선택)
+         .btn 클래스 오브젝트만 raycaster 대상 -->
     <a-entity id="rc"
       oculus-touch-controls="hand:right"
       laser-controls="hand:right"
-      raycaster="objects:.btn;showLine:true;lineColor:#c8a96e;lineOpacity:0.75;far:12">
+      raycaster="objects:.btn;showLine:true;lineColor:#c8a96e;lineOpacity:0.8;far:12">
     </a-entity>
+
   </a-entity>
 
-  <!-- ══════════════════════════
+  <!-- ══════════════════════
        조명
-  ══════════════════════════ -->
+  ══════════════════════ -->
   <a-entity light="type:ambient;color:#120e08;intensity:0.85"></a-entity>
   <a-entity position="0 2.8 0"
     light="type:point;color:#e07830;intensity:2.4;distance:12;decay:2">
-    <a-animation attribute="light.intensity"
-      from="2.4" to="1.4" dur="200" direction="alternate" repeat="indefinite"></a-animation>
+    <a-animation attribute="light.intensity" from="2.4" to="1.4"
+      dur="200" direction="alternate" repeat="indefinite"></a-animation>
   </a-entity>
   <a-entity position="-3.3 2.4 -2" light="type:point;color:#c06020;intensity:0.8;distance:6"></a-entity>
   <a-entity position=" 3.3 2.4  1" light="type:point;color:#b05818;intensity:0.7;distance:5"></a-entity>
 
-  <!-- ══════════════════════════
-       방
-  ══════════════════════════ -->
+  <!-- ══════════════════════
+       방 구조
+  ══════════════════════ -->
   <a-box class="floor" position="0 -0.05 0" width="7.6" height="0.1" depth="11.6"
     material="color:#1c1812;roughness:1"></a-box>
   <a-box position="0 3.65 0"  width="8"   height="0.12" depth="12"  material="color:#141210;roughness:1"></a-box>
   <a-box position="0 1.8 -6"  width="8"   height="3.72" depth="0.3" material="color:#28221c;roughness:0.95"></a-box>
-  <a-box position="-4 1.8 0"  width="0.3" height="3.72" depth="12"  material="color:#241e18;roughness:0.95"></a-box>
-  <a-box position=" 4 1.8 0"  width="0.3" height="3.72" depth="12"  material="color:#241e18;roughness:0.95"></a-box>
+  <a-box position="-4 1.8  0" width="0.3" height="3.72" depth="12"  material="color:#241e18;roughness:0.95"></a-box>
+  <a-box position=" 4 1.8  0" width="0.3" height="3.72" depth="12"  material="color:#241e18;roughness:0.95"></a-box>
   <a-box position="0 1.8  6"  width="8"   height="3.72" depth="0.3" material="color:#1e1a14;roughness:0.97"></a-box>
   <a-box position="0 0.9 -5.85" width="8" height="0.04" depth="0.04" material="color:#181410;roughness:1"></a-box>
   <a-box position="0 1.8 -5.85" width="8" height="0.04" depth="0.04" material="color:#181410;roughness:1"></a-box>
   <a-box position="0 2.7 -5.85" width="8" height="0.04" depth="0.04" material="color:#181410;roughness:1"></a-box>
 
-  <!-- ══════════════════════════
+  <!-- ══════════════════════
        감옥 문
-  ══════════════════════════ -->
+  ══════════════════════ -->
   <a-box position="-1.22 1.8 4.88" width="0.14" height="3.65" depth="0.14" material="color:#3a3028;roughness:0.5;metalness:0.8"></a-box>
   <a-box position=" 1.22 1.8 4.88" width="0.14" height="3.65" depth="0.14" material="color:#3a3028;roughness:0.5;metalness:0.8"></a-box>
-  <a-box position="0 3.25 4.88" width="2.5" height="0.14" depth="0.14"     material="color:#3a3028;roughness:0.5;metalness:0.8"></a-box>
-
+  <a-box position="0 3.25 4.88"    width="2.5"  height="0.14" depth="0.14" material="color:#3a3028;roughness:0.5;metalness:0.8"></a-box>
   <a-entity id="door-left" position="-1.15 0 4.88">
     <a-entity position="0.58 1.65 0">
       <a-cylinder radius="0.04" height="3.3" position="-0.44 0 0" material="color:#2e2820;roughness:0.5;metalness:0.9"></a-cylinder>
@@ -342,156 +386,153 @@ window.addEventListener('load',function(){
 
   <!-- 소품 -->
   <a-box position="-2.8 0.22 -3.5" width="1" height="0.2" depth="2.2" material="color:#4a3520;roughness:0.95"></a-box>
-  <a-box position="-2.8 0.06 -4.5" width="1.1" height="0.12" depth="0.14" material="color:#382810;roughness:1"></a-box>
   <a-cylinder position="2.6 0.22 -4.2" radius="0.18" height="0.38" material="color:#5a4a30;roughness:0.8;metalness:0.35"></a-cylinder>
   <a-box    position="-3.72 2.5  -1.5" width="0.08" height="0.28" depth="0.08" material="color:#5a3a20;roughness:0.9"></a-box>
   <a-sphere position="-3.72 2.68 -1.5" radius="0.1" material="color:#f09040;emissive:#f09040;emissiveIntensity:1"></a-sphere>
   <a-box    position=" 3.72 2.5   0.5" width="0.08" height="0.28" depth="0.08" material="color:#5a3a20;roughness:0.9"></a-box>
   <a-sphere position=" 3.72 2.68  0.5" radius="0.1" material="color:#f09040;emissive:#f09040;emissiveIntensity:1"></a-sphere>
 
-  <!-- ════════════════════════════════════════════
-       언어 선택 패널
-       - a-text 에 class="btn" 없음 → 레이저 통과
-       - a-box 에만 class="btn" → 레이저 정확히 박스만 받음
-  ════════════════════════════════════════════ -->
+  <!-- ════════════════════════════════════════════════════
+       UI 패널 구조 원칙:
+       - a-plane + canvas-text : 텍스트 표시 (클래스 없음 → 레이저 통과)
+       - a-box class="btn"     : 클릭 전용 투명 박스 (레이저 대상)
+       텍스트 plane이 btn 박스보다 z가 조금 앞이어도
+       raycaster가 .btn만 인식하므로 클릭 가능
+  ════════════════════════════════════════════════════ -->
+
+  <!-- ════ 언어 선택 패널 ════ -->
   <a-entity id="lang-panel" position="0 1.65 -5.68" visible="false">
+    <!-- 배경 -->
     <a-box width="3.4" height="2.2" depth="0.05"
       material="color:#0a0805;roughness:0.95;opacity:0.98"></a-box>
     <a-box width="3.44" height="2.24" depth="0.03"
-      material="color:#c8a96e;opacity:0.55" position="0 0 -0.01"></a-box>
+      material="color:#c8a96e;opacity:0.5" position="0 0 -0.01"></a-box>
 
-    <!-- 타이틀: 영어만 사용 (폰트 깨짐 방지) -->
-    <a-text value="PRISON ESCAPE VR"
-      align="center" color="#c8a96e" width="3.6"
-      position="0 0.78 0.04"></a-text>
-    <a-text value="Select Language"
-      align="center" color="#7a6040" width="2.4"
-      position="0 0.42 0.04"></a-text>
+    <!-- 타이틀 (canvas-text) -->
+    <a-plane width="3.2" height="0.3" position="0 0.78 0.04"
+      canvas-text="value:PRISON ESCAPE VR;size:52;color:#c8a96e;bold:true"
+      material="shader:flat;transparent:true"></a-plane>
 
-    <!-- 한국어 버튼: a-box만 .btn, a-text는 클래스 없음 -->
-    <a-box width="1.2" height="0.54" depth="0.1" position="-0.75 -0.08 0.04"
+    <a-plane width="2.8" height="0.22" position="0 0.46 0.04"
+      canvas-text="value:감옥 탈출 VR 퀴즈;size:38;color:#7a6040"
+      material="shader:flat;transparent:true"></a-plane>
+
+    <a-plane width="2.8" height="0.2" position="0 0.18 0.04"
+      canvas-text="value:언어를 선택하세요  /  Select Language;size:32;color:#4a4030"
+      material="shader:flat;transparent:true"></a-plane>
+
+    <!-- 한국어 버튼 영역 -->
+    <a-plane width="1.2" height="0.22" position="-0.75 -0.15 0.12"
+      canvas-text="value:한국어 (Korean);size:40;color:#c8a96e;bold:true"
+      material="shader:flat;transparent:true"></a-plane>
+    <a-box width="1.2" height="0.52" depth="0.1" position="-0.75 -0.15 0.04"
       material="color:#201808;roughness:0.7"
       class="btn" vrbtn="action:lang_ko"></a-box>
-    <a-text value="Korean"
-      align="center" color="#c8a96e" width="1.4"
-      position="-0.75 -0.08 0.11"></a-text>
 
-    <!-- 영어 버튼 -->
-    <a-box width="1.2" height="0.54" depth="0.1" position="0.75 -0.08 0.04"
+    <!-- 영어 버튼 영역 -->
+    <a-plane width="1.2" height="0.22" position="0.75 -0.15 0.12"
+      canvas-text="value:English;size:40;color:#c8a96e;bold:true"
+      material="shader:flat;transparent:true"></a-plane>
+    <a-box width="1.2" height="0.52" depth="0.1" position="0.75 -0.15 0.04"
       material="color:#201808;roughness:0.7"
       class="btn" vrbtn="action:lang_en"></a-box>
-    <a-text value="English"
-      align="center" color="#c8a96e" width="1.4"
-      position="0.75 -0.08 0.11"></a-text>
 
-    <a-text value="Right laser + trigger to select"
-      align="center" color="#353020" width="3.0"
-      position="0 -0.7 0.04"></a-text>
+    <a-plane width="3.0" height="0.18" position="0 -0.72 0.04"
+      canvas-text="value:오른쪽 레이저로 버튼 겨냥 후 트리거  /  Right laser + trigger;size:26;color:#353020"
+      material="shader:flat;transparent:true"></a-plane>
   </a-entity>
 
-  <!-- ════════════════════════════════════════════
-       퀴즈 패널
-       핵심: a-box(.btn) z=0.04, a-text z=0.12
-       텍스트가 박스보다 앞에 있으면 레이저 차단됨
-       → 텍스트를 박스보다 조금만 앞으로 (0.08 차이)
-          하지만 텍스트엔 class="btn" 없어서 raycaster 무시
-  ════════════════════════════════════════════ -->
+  <!-- ════ 퀴즈 패널 ════ -->
   <a-entity id="quiz-panel" position="0 1.65 -5.68" visible="false">
+    <!-- 배경 -->
     <a-box width="4.0" height="3.0" depth="0.05"
       material="color:#0a0805;roughness:0.95;opacity:0.98"></a-box>
     <a-box width="4.04" height="3.04" depth="0.03"
       material="color:#c8a96e;opacity:0.45" position="0 0 -0.01"></a-box>
 
     <!-- HUD -->
-    <a-text id="hud" value="Q 1/5  Score: 0"
-      align="center" color="#6a5a30" width="3.8"
-      position="0 1.35 0.04"></a-text>
+    <a-plane id="hud" width="3.8" height="0.18" position="0 1.35 0.04"
+      canvas-text="value:Q 1/5   Score: 0;size:32;color:#8a7040"
+      material="shader:flat;transparent:true"></a-plane>
 
-    <!-- 문제 텍스트 (한글 포함 가능 — a-text는 canvas 렌더) -->
-    <a-text id="qtxt" value=""
-      align="center" color="#e8dcc8" width="3.4" wrap-count="20"
-      position="0 0.85 0.04"></a-text>
+    <!-- 문제 텍스트 -->
+    <a-plane id="qtxt" width="3.6" height="0.26" position="0 0.88 0.04"
+      canvas-text="value:...;size:44;color:#e8dcc8;bold:true"
+      material="shader:flat;transparent:true"></a-plane>
 
-    <!-- ─── 보기 4개 ───
-         구조: a-box (class="btn", z=0.04) + a-text (클래스 없음, z=0.11)
-         텍스트가 박스보다 앞이지만 raycaster 대상이 아니므로 클릭은 박스가 받음 -->
-
-    <!-- ① 왼쪽 위 -->
-    <a-box id="cbg0" width="1.82" height="0.5" depth="0.09"
-      position="-1.02 0.28 0.04"
+    <!-- 보기 ①: 텍스트 plane (앞) + 클릭 박스 (뒤) -->
+    <a-plane id="ctx0" width="1.82" height="0.44" position="-1.02 0.3 0.12"
+      canvas-text="value:① ...;size:38;color:#c8a96e"
+      material="shader:flat;transparent:true"></a-plane>
+    <a-box id="cbg0" width="1.82" height="0.5" depth="0.09" position="-1.02 0.3 0.04"
       material="color:#1a1510;roughness:0.8"
       class="btn" vrbtn="action:choice_0"></a-box>
-    <a-text id="ctx0" value="1) ..."
-      align="center" color="#c8a96e" width="1.75" wrap-count="14"
-      position="-1.02 0.28 0.11"></a-text>
 
-    <!-- ② 오른쪽 위 -->
-    <a-box id="cbg1" width="1.82" height="0.5" depth="0.09"
-      position="1.02 0.28 0.04"
+    <!-- 보기 ②  -->
+    <a-plane id="ctx1" width="1.82" height="0.44" position="1.02 0.3 0.12"
+      canvas-text="value:② ...;size:38;color:#c8a96e"
+      material="shader:flat;transparent:true"></a-plane>
+    <a-box id="cbg1" width="1.82" height="0.5" depth="0.09" position="1.02 0.3 0.04"
       material="color:#1a1510;roughness:0.8"
       class="btn" vrbtn="action:choice_1"></a-box>
-    <a-text id="ctx1" value="2) ..."
-      align="center" color="#c8a96e" width="1.75" wrap-count="14"
-      position="1.02 0.28 0.11"></a-text>
 
-    <!-- ③ 왼쪽 아래 -->
-    <a-box id="cbg2" width="1.82" height="0.5" depth="0.09"
-      position="-1.02 -0.3 0.04"
+    <!-- 보기 ③ -->
+    <a-plane id="ctx2" width="1.82" height="0.44" position="-1.02 -0.28 0.12"
+      canvas-text="value:③ ...;size:38;color:#c8a96e"
+      material="shader:flat;transparent:true"></a-plane>
+    <a-box id="cbg2" width="1.82" height="0.5" depth="0.09" position="-1.02 -0.28 0.04"
       material="color:#1a1510;roughness:0.8"
       class="btn" vrbtn="action:choice_2"></a-box>
-    <a-text id="ctx2" value="3) ..."
-      align="center" color="#c8a96e" width="1.75" wrap-count="14"
-      position="-1.02 -0.3 0.11"></a-text>
 
-    <!-- ④ 오른쪽 아래 -->
-    <a-box id="cbg3" width="1.82" height="0.5" depth="0.09"
-      position="1.02 -0.3 0.04"
+    <!-- 보기 ④ -->
+    <a-plane id="ctx3" width="1.82" height="0.44" position="1.02 -0.28 0.12"
+      canvas-text="value:④ ...;size:38;color:#c8a96e"
+      material="shader:flat;transparent:true"></a-plane>
+    <a-box id="cbg3" width="1.82" height="0.5" depth="0.09" position="1.02 -0.28 0.04"
       material="color:#1a1510;roughness:0.8"
       class="btn" vrbtn="action:choice_3"></a-box>
-    <a-text id="ctx3" value="4) ..."
-      align="center" color="#c8a96e" width="1.75" wrap-count="14"
-      position="1.02 -0.3 0.11"></a-text>
 
     <!-- 피드백 -->
-    <a-text id="fb" value=""
-      align="center" color="#5dcaa5" width="3.6"
-      position="0 -0.82 0.04"></a-text>
+    <a-plane id="fb" width="3.6" height="0.22" position="0 -0.8 0.04"
+      canvas-text="value:;size:38;color:#5dcaa5"
+      material="shader:flat;transparent:true"></a-plane>
 
     <!-- 조작 안내 -->
-    <a-text value="Right laser + trigger | Left stick: move | Right stick: turn"
-      align="center" color="#252018" width="3.8"
-      position="0 -1.15 0.04"></a-text>
+    <a-plane width="3.8" height="0.16" position="0 -1.13 0.04"
+      canvas-text="value:오른쪽 레이저+트리거 선택  |  왼쪽 조이스틱 이동  |  오른쪽 조이스틱 회전;size:22;color:#2a2018"
+      material="shader:flat;transparent:true"></a-plane>
   </a-entity>
 
-  <!-- ════════════════════════════════════════════
-       결과 패널
-  ════════════════════════════════════════════ -->
+  <!-- ════ 결과 패널 ════ -->
   <a-entity id="result-panel" position="0 1.65 -2" visible="false">
-    <a-box width="3.0" height="2.6" depth="0.07"
+    <a-box width="3.2" height="2.7" depth="0.07"
       material="color:#060408;roughness:0.95;opacity:0.98"></a-box>
-    <a-box width="3.04" height="2.64" depth="0.05"
+    <a-box width="3.24" height="2.74" depth="0.05"
       material="color:#c8a96e;opacity:0.6" position="0 0 -0.02"></a-box>
 
-    <a-text id="rtitle" value=""
-      align="center" color="#5dcaa5" width="3.2"
-      position="0 0.88 0.06"></a-text>
-    <a-text id="rscore" value=""
-      align="center" color="#e8dcc8" width="2.8"
-      position="0 0.48 0.06"></a-text>
-    <a-text id="rmsg" value=""
-      align="center" color="#7a7060" width="2.6"
-      position="0 0.16 0.06"></a-text>
+    <a-plane id="rtitle" width="3.0" height="0.3" position="0 0.95 0.06"
+      canvas-text="value:...;size:52;color:#5dcaa5;bold:true"
+      material="shader:flat;transparent:true"></a-plane>
 
-    <a-box width="1.8" height="0.52" depth="0.09" position="0 -0.32 0.06"
+    <a-plane id="rscore" width="2.8" height="0.22" position="0 0.52 0.06"
+      canvas-text="value:0/5 (0%);size:40;color:#e8dcc8"
+      material="shader:flat;transparent:true"></a-plane>
+
+    <a-plane id="rmsg" width="2.6" height="0.2" position="0 0.2 0.06"
+      canvas-text="value:...;size:32;color:#888070"
+      material="shader:flat;transparent:true"></a-plane>
+
+    <!-- 다시 도전 버튼 -->
+    <a-plane id="rretry" width="1.8" height="0.22" position="0 -0.3 0.14"
+      canvas-text="value:↺ 다시 도전;size:40;color:#c8a96e;bold:true"
+      material="shader:flat;transparent:true"></a-plane>
+    <a-box width="1.9" height="0.54" depth="0.09" position="0 -0.3 0.06"
       material="color:#201808;roughness:0.7"
       class="btn" vrbtn="action:retry"></a-box>
-    <a-text id="rretry" value="Retry"
-      align="center" color="#c8a96e" width="2.2"
-      position="0 -0.32 0.13"></a-text>
 
-    <a-text value="Right laser + trigger to retry"
-      align="center" color="#252018" width="2.8"
-      position="0 -0.82 0.06"></a-text>
+    <a-plane width="2.8" height="0.16" position="0 -0.88 0.06"
+      canvas-text="value:오른쪽 레이저 + 트리거  /  Right laser + trigger;size:26;color:#252018"
+      material="shader:flat;transparent:true"></a-plane>
   </a-entity>
 
 </a-scene>
