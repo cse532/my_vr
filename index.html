@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prison Escape VR Quiz / 감옥 탈출 VR 퀴즈</title>
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <style>
+    #lang-screen {
+      position: fixed; inset: 0;
+      background: #0a0a0f;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 9999;
+      font-family: 'Courier New', monospace;
+    }
+    #lang-screen h1 {
+      color: #c8a96e;
+      font-size: clamp(1.4rem, 4vw, 2.2rem);
+      letter-spacing: 0.12em;
+      text-align: center;
+      margin-bottom: 0.3em;
+      text-shadow: 0 0 30px #c8a96e88;
+    }
+    #lang-screen p {
+      color: #888;
+      font-size: 0.95rem;
+      margin-bottom: 2.5em;
+      letter-spacing: 0.05em;
+    }
+    .lang-btns { display: flex; gap: 1.5rem; flex-wrap: wrap; justify-content: center; }
+    .lang-btn {
+      padding: 0.9em 2.2em;
+      border: 1px solid #c8a96e;
+      background: transparent;
+      color: #c8a96e;
+      font-family: 'Courier New', monospace;
+      font-size: 1.05rem;
+      letter-spacing: 0.1em;
+      cursor: pointer;
+      transition: all 0.25s;
+    }
+    .lang-btn:hover { background: #c8a96e; color: #0a0a0f; }
+
+    #ui-overlay {
+      position: fixed; inset: 0;
+      display: none;
+      pointer-events: none;
+      z-index: 100;
+    }
+    #quiz-panel {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: linear-gradient(to top, rgba(5,5,10,0.97) 70%, transparent);
+      padding: 1.8rem clamp(1rem, 5vw, 3rem) 1.4rem;
+      pointer-events: all;
+      font-family: 'Courier New', monospace;
+      transform: translateY(100%);
+      transition: transform 0.5s cubic-bezier(0.23,1,0.32,1);
+    }
+    #quiz-panel.show { transform: translateY(0); }
+    #score-bar {
+      position: fixed; top: 1.2rem; right: 1.5rem;
+      font-family: 'Courier New', monospace;
+      font-size: 0.85rem;
+      color: #c8a96e;
+      letter-spacing: 0.08em;
+      pointer-events: none;
+      background: rgba(0,0,0,0.6);
+      padding: 0.4em 0.9em;
+      border: 1px solid #c8a96e44;
+    }
+    #lang-switch-btn {
+      position: fixed; top: 1.2rem; left: 1.5rem;
+      font-family: 'Courier New', monospace;
+      font-size: 0.78rem;
+      color: #888;
+      background: rgba(0,0,0,0.6);
+      border: 1px solid #444;
+      padding: 0.35em 0.85em;
+      cursor: pointer;
+      pointer-events: all;
+      letter-spacing: 0.06em;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    #lang-switch-btn:hover { color: #c8a96e; border-color: #c8a96e66; }
+
+    #question-num {
+      font-size: 0.75rem; color: #666; letter-spacing: 0.12em;
+      margin-bottom: 0.5em;
+    }
+    #question-text {
+      font-size: clamp(0.95rem, 2.5vw, 1.15rem);
+      color: #e8dcc8;
+      margin-bottom: 1.2em;
+      line-height: 1.55;
+    }
+    #choices {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.6rem;
+    }
+    .choice-btn {
+      background: rgba(200,169,110,0.07);
+      border: 1px solid #c8a96e55;
+      color: #c8a96e;
+      font-family: 'Courier New', monospace;
+      font-size: clamp(0.78rem, 2vw, 0.88rem);
+      padding: 0.65em 0.9em;
+      text-align: left;
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: 0.03em;
+      line-height: 1.4;
+    }
+    .choice-btn:hover { background: rgba(200,169,110,0.18); border-color: #c8a96e; }
+    .choice-btn.correct { background: rgba(29,158,117,0.25); border-color: #1d9e75; color: #5dcaa5; }
+    .choice-btn.wrong { background: rgba(216,90,48,0.2); border-color: #d85a30; color: #f0997b; }
+    .choice-btn:disabled { cursor: default; }
+
+    #feedback {
+      margin-top: 0.9em;
+      font-size: 0.85rem;
+      min-height: 1.2em;
+      color: #aaa;
+      letter-spacing: 0.04em;
+    }
+
+    #result-screen {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.92);
+      display: none;
+      flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 200;
+      font-family: 'Courier New', monospace;
+      text-align: center;
+      padding: 2rem;
+    }
+    #result-screen.show { display: flex; }
+    #result-title {
+      font-size: clamp(2rem, 6vw, 3.5rem);
+      letter-spacing: 0.15em;
+      margin-bottom: 0.4em;
+    }
+    #result-score-text {
+      font-size: 1.1rem;
+      color: #aaa;
+      margin-bottom: 0.6em;
+      letter-spacing: 0.06em;
+    }
+    #result-msg {
+      font-size: 0.95rem;
+      color: #666;
+      margin-bottom: 2.5em;
+      max-width: 36ch;
+      line-height: 1.6;
+    }
+    #retry-btn {
+      padding: 0.85em 2.4em;
+      border: 1px solid #c8a96e;
+      background: transparent;
+      color: #c8a96e;
+      font-family: 'Courier New', monospace;
+      font-size: 0.95rem;
+      letter-spacing: 0.1em;
+      cursor: pointer;
+      transition: all 0.25s;
+    }
+    #retry-btn:hover { background: #c8a96e; color: #0a0a0f; }
+
+    #bars-overlay {
+      position: fixed; inset: 0;
+      pointer-events: none;
+      z-index: 50;
+      display: flex;
+    }
+    .vbar {
+      flex: 1;
+      border-right: 2px solid rgba(80,60,30,0.35);
+      transition: opacity 2s ease;
+    }
+    #bars-overlay.open .vbar { opacity: 0; }
+
+    @keyframes flicker { 0%,100%{opacity:1} 48%{opacity:.9} 50%{opacity:.7} 52%{opacity:.9} }
+  </style>
+</head>
+<body style="margin:0;overflow:hidden;background:#000">
+
+<!-- Language Selection Screen -->
+<div id="lang-screen">
+  <h1>⛓ PRISON ESCAPE VR</h1>
+  <h1 style="font-size:clamp(1rem,3vw,1.5rem);color:#888;margin-top:-0.4em;text-shadow:none">감옥 탈출 VR 퀴즈</h1>
+  <p>Select your language / 언어를 선택하세요</p>
+  <div class="lang-btns">
+    <button class="lang-btn" onclick="startGame('ko')">🇰🇷 한국어</button>
+    <button class="lang-btn" onclick="startGame('en')">🇺🇸 English</button>
+  </div>
+</div>
+
+<!-- Prison bar overlay -->
+<div id="bars-overlay">
+  <div class="vbar"></div><div class="vbar"></div><div class="vbar"></div>
+  <div class="vbar"></div><div class="vbar"></div><div class="vbar"></div>
+  <div class="vbar"></div>
+</div>
+
+<!-- HUD -->
+<div id="ui-overlay">
+  <button id="lang-switch-btn" onclick="switchLang()">🌐 KO / EN</button>
+  <div id="score-bar">Q <span id="q-current">1</span>/<span id="q-total">5</span> &nbsp;|&nbsp; ✓ <span id="score-count">0</span></div>
+
+  <div id="quiz-panel">
+    <div id="question-num"></div>
+    <div id="question-text"></div>
+    <div id="choices"></div>
+    <div id="feedback"></div>
+  </div>
+</div>
+
+<!-- Result Screen -->
+<div id="result-screen">
+  <div id="result-title"></div>
+  <div id="result-score-text"></div>
+  <div id="result-msg"></div>
+  <button id="retry-btn" onclick="retryGame()"></button>
+</div>
+
+<!-- A-Frame VR Scene -->
+<a-scene id="vr-scene" style="display:none"
+  vr-mode-ui="enabled: true"
+  loading-screen="dotsColor: #c8a96e; backgroundColor: #050508">
+
+  <!-- Assets -->
+  <a-assets>
+    <a-mixin id="stone" material="color: #2a2520; roughness: 0.95; metalness: 0"></a-mixin>
+    <a-mixin id="rust" material="color: #3d2a1a; roughness: 1; metalness: 0.3"></a-mixin>
+  </a-assets>
+
+  <!-- Sky / ambient -->
+  <a-sky color="#050508"></a-sky>
+  <a-entity light="type: ambient; color: #1a1510; intensity: 0.6"></a-entity>
+
+  <!-- Main torch light (flicker effect via animation) -->
+  <a-entity
+    id="torch-light"
+    position="0 2.5 -1"
+    light="type: point; color: #e8823a; intensity: 1.6; distance: 8; decay: 2">
+    <a-animation attribute="light.intensity" from="1.6" to="1.1" dur="180" direction="alternate" repeat="indefinite" easing="easeInOutSine"></a-animation>
+    <a-animation attribute="light.color" from="#e8823a" to="#d06020" dur="220" direction="alternate" repeat="indefinite" easing="easeInOutSine"></a-animation>
+  </a-entity>
+
+  <!-- Secondary fill light -->
+  <a-entity position="-3 1.5 2" light="type: point; color: #8a6030; intensity: 0.4; distance: 5"></a-entity>
+
+  <!-- Floor: stone tiles -->
+  <a-box position="0 -0.01 0" width="8" height="0.05" depth="12"
+    material="color: #1e1a16; roughness: 0.98; repeat: 8 12"></a-box>
+  <!-- Floor cracks -->
+  <a-box position="1 0 -1" width="0.04" height="0.06" depth="3" material="color: #111; roughness:1"></a-box>
+  <a-box position="-0.8 0 1" width="0.04" height="0.06" depth="2" material="color: #0e0e0e; roughness:1"></a-box>
+
+  <!-- Ceiling -->
+  <a-box position="0 3.5 0" width="8" height="0.12" depth="12"
+    material="color: #181410; roughness: 1"></a-box>
+
+  <!-- Back wall -->
+  <a-box position="0 1.75 -6" width="8" height="3.5" depth="0.3"
+    material="color: #2a2520; roughness: 0.95"></a-box>
+  <!-- Wall texture lines -->
+  <a-box position="0 1.75 -5.85" width="8" height="0.04" depth="0.05" material="color:#1a1510;roughness:1"></a-box>
+  <a-box position="0 0.9 -5.85" width="8" height="0.04" depth="0.05" material="color:#1a1510;roughness:1"></a-box>
+  <a-box position="0 2.6 -5.85" width="8" height="0.04" depth="0.05" material="color:#1a1510;roughness:1"></a-box>
+
+  <!-- Side walls -->
+  <a-box position="-4 1.75 0" width="0.3" height="3.5" depth="12"
+    material="color: #252018; roughness: 0.95"></a-box>
+  <a-box position="4 1.75 0" width="0.3" height="3.5" depth="12"
+    material="color: #252018; roughness: 0.95"></a-box>
+
+  <!-- Front wall (behind camera) -->
+  <a-box position="0 1.75 6" width="8" height="3.5" depth="0.3"
+    material="color: #1e1a14; roughness: 0.97"></a-box>
+
+  <!-- Prison bars (front) -->
+  <a-entity id="bars-entity" position="0 0 4.5">
+    <!-- Horizontal bars -->
+    <a-cylinder position="0 2.8 0" radius="0.04" height="8" rotation="0 0 90" material="color:#3a3028;roughness:0.6;metalness:0.8"></a-cylinder>
+    <a-cylinder position="0 2.2 0" radius="0.035" height="8" rotation="0 0 90" material="color:#3a3028;roughness:0.6;metalness:0.8"></a-cylinder>
+    <a-cylinder position="0 0.3 0" radius="0.04" height="8" rotation="0 0 90" material="color:#3a3028;roughness:0.6;metalness:0.8"></a-cylinder>
+    <!-- Vertical bars -->
+    <a-cylinder position="-3.5 1.5 0" radius="0.045" height="3.2" rotation="0 0 0" material="color:#2e2620;roughness:0.5;metalness:0.9"></a-cylinder>
+    <a-cylinder position="-2.5 1.5 0" radius="0.045" height="3.2" material="color:#2e2620;roughness:0.5;metalness:0.9"></a-cylinder>
+    <a-cylinder position="-1.5 1.5 0" radius="0.045" height="3.2" material="color:#2e2620;roughness:0.5;metalness:0.9"></a-cylinder>
+    <a-cylinder position="-0.5 1.5 0" radius="0.045" height="3.2" material="color:#2e2620;roughness:0.5;metalness:0.9"></a-cylinder>
+    <a-cylinder position="0.5 1.5 0" radius="0.045" height="3.2" material="color:#2e2620;roughness:0.5;metalness:0.9"></a-cylinder>
+    <a-cylinder position="1.5 1.5 0" radius="0.045" height="3.2" material="color:#2e2620;roughness:0.5;metalness:0.9"></a-cylinder>
+    <a-cylinder position="2.5 1.5 0" radius="0.045" height="3.2" material="color:#2e2620;roughness:0.5;metalness:0.9"></a-cylinder>
+    <a-cylinder position="3.5 1.5 0" radius="0.045" height="3.2" material="color:#2e2620;roughness:0.5;metalness:0.9"></a-cylinder>
+    <!-- Gate frame -->
+    <a-box position="0 1.5 0" width="2.2" height="3.1" depth="0.06" material="color:#00000000;transparent:true"></a-box>
+    <a-box position="-1.1 1.5 0" width="0.1" height="3.2" depth="0.1" material="color:#3a3028;roughness:0.4;metalness:0.9"></a-box>
+    <a-box position="1.1 1.5 0" width="0.1" height="3.2" depth="0.1" material="color:#3a3028;roughness:0.4;metalness:0.9"></a-box>
+  </a-entity>
+
+  <!-- Torch on left wall -->
+  <a-entity position="-3.5 2.4 -2">
+    <a-box width="0.08" height="0.3" depth="0.08" position="0.12 0 0" material="color:#5a3a20;roughness:0.9"></a-box>
+    <a-sphere radius="0.09" position="0.12 0.2 0" material="color:#f09040;emissive:#f09040;emissiveIntensity:0.9"></a-sphere>
+    <a-entity position="0.12 0.3 0" light="type:point;color:#f07020;intensity:0.8;distance:4"></a-entity>
+  </a-entity>
+
+  <!-- Torch on right wall -->
+  <a-entity position="3.5 2.4 0">
+    <a-box width="0.08" height="0.3" depth="0.08" position="-0.12 0 0" material="color:#5a3a20;roughness:0.9"></a-box>
+    <a-sphere radius="0.09" position="-0.12 0.2 0" material="color:#f09040;emissive:#f09040;emissiveIntensity:0.9"></a-sphere>
+    <a-entity position="-0.12 0.3 0" light="type:point;color:#f06010;intensity:0.7;distance:4"></a-entity>
+  </a-entity>
+
+  <!-- Old bed (wooden plank) -->
+  <a-box position="-2.5 0.25 -3.5" width="0.9" height="0.2" depth="2" material="color:#4a3520;roughness:0.95"></a-box>
+  <a-box position="-2.5 0.05 -3.5" width="1" height="0.1" depth="0.12" material="color:#3a2818;roughness:1"></a-box>
+  <a-box position="-2.5 0.05 -2.5" width="1" height="0.1" depth="0.12" material="color:#3a2818;roughness:1"></a-box>
+
+  <!-- Old bucket -->
+  <a-cylinder position="2.5 0.2 -4" radius="0.18" height="0.35" material="color:#5a4a30;roughness:0.8;metalness:0.3"></a-cylinder>
+
+  <!-- Chain on wall -->
+  <a-box position="3.7 2 -1" width="0.04" height="1.2" depth="0.04" material="color:#4a4030;roughness:0.6;metalness:0.7"></a-box>
+  <a-torus position="3.7 1.4 -1" radius="0.1" radiusTubular="0.02" material="color:#5a5040;roughness:0.5;metalness:0.8"></a-torus>
+
+  <!-- Camera / Player -->
+  <a-entity id="player" position="0 1.6 3" rotation="0 180 0">
+    <a-camera look-controls wasd-controls="enabled:false"></a-camera>
+  </a-entity>
+
+</a-scene>
+
+<script>
+// ─── Quiz Data ───────────────────────────────────────────────────────────────
+const quizData = {
+  ko: [
+    {
+      q: "대한민국의 수도는 어디인가요?",
+      choices: ["부산", "서울", "인천", "대전"],
+      answer: 1
+    },
+    {
+      q: "1 + 1 × 2 의 결과는?",
+      choices: ["4", "3", "2", "6"],
+      answer: 1
+    },
+    {
+      q: "물의 끓는점은 표준 대기압에서 몇 °C 인가요?",
+      choices: ["90°C", "110°C", "100°C", "80°C"],
+      answer: 2
+    },
+    {
+      q: "세계에서 가장 큰 대륙은?",
+      choices: ["아프리카", "유럽", "아시아", "아메리카"],
+      answer: 2
+    },
+    {
+      q: "한국어로 'apple' 은 무엇인가요?",
+      choices: ["바나나", "수박", "딸기", "사과"],
+      answer: 3
+    }
+  ],
+  en: [
+    {
+      q: "What is the capital city of South Korea?",
+      choices: ["Busan", "Seoul", "Incheon", "Daejeon"],
+      answer: 1
+    },
+    {
+      q: "What is 1 + 1 × 2?",
+      choices: ["4", "3", "2", "6"],
+      answer: 1
+    },
+    {
+      q: "At what temperature does water boil at standard pressure?",
+      choices: ["90°C", "110°C", "100°C", "80°C"],
+      answer: 2
+    },
+    {
+      q: "What is the largest continent in the world?",
+      choices: ["Africa", "Europe", "Asia", "America"],
+      answer: 2
+    },
+    {
+      q: "What is '사과' in English?",
+      choices: ["Banana", "Watermelon", "Strawberry", "Apple"],
+      answer: 3
+    }
+  ]
+};
+
+const i18n = {
+  ko: {
+    questionOf: (c, t) => `문제 ${c} / ${t}`,
+    correct: "✓ 정답입니다!",
+    wrong: (a) => `✗ 오답. 정답: ${a}`,
+    escape: "🔓 탈출 성공!",
+    fail: "⛓ 탈출 실패",
+    scoreLabel: (c, t) => `${c}/${t} 문제 정답`,
+    escapeMsg: "감옥 문이 열립니다. 자유를 향해 달려가세요!",
+    failMsg: "80% 이상 맞춰야 탈출할 수 있습니다. 다시 도전하세요.",
+    retry: "다시 도전",
+    switchTo: "EN"
+  },
+  en: {
+    questionOf: (c, t) => `Question ${c} of ${t}`,
+    correct: "✓ Correct!",
+    wrong: (a) => `✗ Wrong. Answer: ${a}`,
+    escape: "🔓 ESCAPED!",
+    fail: "⛓ STILL TRAPPED",
+    scoreLabel: (c, t) => `${c}/${t} correct`,
+    escapeMsg: "The cell door swings open. Run to freedom!",
+    failMsg: "You need 80% or higher to escape. Try again.",
+    retry: "Try Again",
+    switchTo: "KO"
+  }
+};
+
+// ─── Game State ───────────────────────────────────────────────────────────────
+let lang = 'ko';
+let currentQ = 0;
+let score = 0;
+let answered = false;
+let questions = [];
+
+function startGame(selectedLang) {
+  lang = selectedLang;
+  document.getElementById('lang-screen').style.display = 'none';
+  document.getElementById('vr-scene').style.removeProperty('display');
+  document.getElementById('ui-overlay').style.display = 'block';
+  initQuiz();
+}
+
+function initQuiz() {
+  questions = [...quizData[lang]];
+  // Shuffle
+  for (let i = questions.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [questions[i], questions[j]] = [questions[j], questions[i]];
+  }
+  currentQ = 0;
+  score = 0;
+  updateScoreBar();
+  showQuestion();
+  setTimeout(() => {
+    document.getElementById('quiz-panel').classList.add('show');
+  }, 800);
+}
+
+function showQuestion() {
+  answered = false;
+  const t = i18n[lang];
+  const q = questions[currentQ];
+  const total = questions.length;
+
+  document.getElementById('question-num').textContent = t.questionOf(currentQ + 1, total);
+  document.getElementById('q-current').textContent = currentQ + 1;
+  document.getElementById('q-total').textContent = total;
+  document.getElementById('question-text').textContent = q.q;
+  document.getElementById('feedback').textContent = '';
+
+  const choicesEl = document.getElementById('choices');
+  choicesEl.innerHTML = '';
+  q.choices.forEach((c, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'choice-btn';
+    btn.textContent = `${['①','②','③','④'][i]}  ${c}`;
+    btn.onclick = () => selectAnswer(i, btn);
+    choicesEl.appendChild(btn);
+  });
+}
+
+function selectAnswer(idx, btn) {
+  if (answered) return;
+  answered = true;
+  const q = questions[currentQ];
+  const t = i18n[lang];
+  const allBtns = document.querySelectorAll('.choice-btn');
+  allBtns.forEach(b => b.disabled = true);
+  allBtns[q.answer].classList.add('correct');
+
+  if (idx === q.answer) {
+    score++;
+    document.getElementById('feedback').textContent = t.correct;
+    document.getElementById('feedback').style.color = '#5dcaa5';
+  } else {
+    btn.classList.add('wrong');
+    document.getElementById('feedback').textContent = t.wrong(q.choices[q.answer]);
+    document.getElementById('feedback').style.color = '#f0997b';
+  }
+  updateScoreBar();
+
+  setTimeout(() => {
+    currentQ++;
+    if (currentQ < questions.length) {
+      showQuestion();
+    } else {
+      showResult();
+    }
+  }, 1400);
+}
+
+function updateScoreBar() {
+  document.getElementById('score-count').textContent = score;
+}
+
+function showResult() {
+  document.getElementById('quiz-panel').classList.remove('show');
+  const total = questions.length;
+  const pct = score / total;
+  const t = i18n[lang];
+  const rs = document.getElementById('result-screen');
+
+  document.getElementById('result-title').textContent = pct >= 0.8 ? t.escape : t.fail;
+  document.getElementById('result-title').style.color = pct >= 0.8 ? '#5dcaa5' : '#d85a30';
+  document.getElementById('result-score-text').textContent = t.scoreLabel(score, total) + ` (${Math.round(pct*100)}%)`;
+  document.getElementById('result-msg').textContent = pct >= 0.8 ? t.escapeMsg : t.failMsg;
+  document.getElementById('retry-btn').textContent = t.retry;
+
+  rs.classList.add('show');
+
+  if (pct >= 0.8) {
+    // Open bars animation
+    setTimeout(() => {
+      document.getElementById('bars-overlay').classList.add('open');
+      // Animate gate in VR
+      const barsEl = document.getElementById('bars-entity');
+      if (barsEl) {
+        barsEl.setAttribute('animation', 'property: position; to: -4 0 4.5; dur: 2000; easing: easeInOutQuad');
+      }
+    }, 600);
+  }
+}
+
+function retryGame() {
+  document.getElementById('result-screen').classList.remove('show');
+  document.getElementById('bars-overlay').classList.remove('open');
+  // Reset gate
+  const barsEl = document.getElementById('bars-entity');
+  if (barsEl) {
+    barsEl.removeAttribute('animation');
+    barsEl.setAttribute('position', '0 0 4.5');
+  }
+  initQuiz();
+}
+
+function switchLang() {
+  lang = lang === 'ko' ? 'en' : 'ko';
+  initQuiz();
+}
+</script>
+</body>
+</html>
